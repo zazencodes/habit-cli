@@ -1,0 +1,194 @@
+import { Command } from 'commander';
+import pc from 'picocolors';
+import { FileStorage, StorageAdapter } from './storage.js';
+import {
+  createHabit,
+  completeHabit,
+  undoHabit,
+  deleteHabit,
+  getHabitsWithStreaks,
+  findHabit,
+  calculateStreak,
+} from './core/habits.js';
+import { calculateStats } from './core/stats.js';
+import {
+  formatHabitList,
+  formatHabitDetail,
+  formatStats,
+  formatSuccess,
+  formatError,
+  formatInfo,
+} from './ui/formatters.js';
+import { Frequency } from './types.js';
+
+export function createCli(storage: StorageAdapter = new FileStorage()): Command {
+  const program = new Command();
+
+  program
+    .name('habit')
+    .description('A clean, fast CLI habit and task tracker')
+    .version('0.1.0');
+
+  // habit add <title>
+  program
+    .command('add <title>')
+    .description('Add a new habit to track')
+    .option('-f, --frequency <frequency>', 'Habit frequency: daily or weekly', 'daily')
+    .option('-d, --desc <description>', 'Optional habit description')
+    .option('-t, --tag <tags...>', 'Optional categorization tags')
+    .action(async (title: string, options) => {
+      try {
+        const store = await storage.load();
+        const freq: Frequency = options.frequency === 'weekly' ? 'weekly' : 'daily';
+        const { habit, store: newStore } = createHabit(store, {
+          title,
+          description: options.desc,
+          frequency: freq,
+          tags: options.tag,
+        });
+        await storage.save(newStore);
+        console.log(formatSuccess(`Created habit ${pc.bold(habit.title)} [${habit.id}] (${habit.frequency})`));
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit list
+  program
+    .command('list')
+    .alias('ls')
+    .description('List all active habits and their current streaks')
+    .option('-a, --all', 'Show all habits including archived ones', false)
+    .option('-t, --tag <tag>', 'Filter habits by tag')
+    .action(async options => {
+      try {
+        const store = await storage.load();
+        const habits = getHabitsWithStreaks(store, {
+          showArchived: options.all,
+          tag: options.tag,
+        });
+        console.log(formatHabitList(habits));
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit done <id|title>
+  program
+    .command('done <query>')
+    .alias('check')
+    .alias('complete')
+    .description('Mark a habit as completed for today (or a specific date)')
+    .option('-d, --date <date>', 'Completion date in YYYY-MM-DD format')
+    .option('-n, --note <note>', 'Optional check-in note')
+    .action(async (query: string, options) => {
+      try {
+        const store = await storage.load();
+        const { habit, store: newStore, alreadyCompleted } = completeHabit(store, query, {
+          date: options.date,
+          note: options.note,
+        });
+        await storage.save(newStore);
+
+        if (alreadyCompleted) {
+          console.log(formatInfo(`Habit "${habit.title}" was already completed for ${options.date || 'today'}.`));
+        } else {
+          const streakText = habit.streak.currentStreak > 1
+            ? ` Streak: ${pc.yellow(`🔥 ${habit.streak.currentStreak} in a row!`)}`
+            : '';
+          console.log(formatSuccess(`Completed "${pc.bold(habit.title)}"!${streakText}`));
+        }
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit undo <id|title>
+  program
+    .command('undo <query>')
+    .description('Undo a habit check-in for today (or a specific date)')
+    .option('-d, --date <date>', 'Target date in YYYY-MM-DD format')
+    .action(async (query: string, options) => {
+      try {
+        const store = await storage.load();
+        const { habit, store: newStore, removed } = undoHabit(store, query, options.date);
+        await storage.save(newStore);
+
+        if (removed) {
+          console.log(formatSuccess(`Undid completion for "${pc.bold(habit.title)}" on ${options.date || 'today'}.`));
+        } else {
+          console.log(formatInfo(`No completion found to undo for "${habit.title}" on ${options.date || 'today'}.`));
+        }
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit show <id|title>
+  program
+    .command('show <query>')
+    .description('View detailed statistics and history for a habit')
+    .action(async (query: string) => {
+      try {
+        const store = await storage.load();
+        const habit = findHabit(store, query);
+        if (!habit) {
+          throw new Error(`Habit not found matching "${query}".`);
+        }
+        const habitWithStreak = {
+          ...habit,
+          streak: calculateStreak(habit),
+        };
+        console.log(formatHabitDetail(habitWithStreak));
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit stats
+  program
+    .command('stats')
+    .description('Show overall completion statistics and streak leaderboards')
+    .action(async () => {
+      try {
+        const store = await storage.load();
+        const stats = calculateStats(store);
+        console.log(formatStats(stats));
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit delete <id|title>
+  program
+    .command('delete <query>')
+    .alias('rm')
+    .description('Archive or permanently delete a habit')
+    .option('--hard', 'Permanently delete the habit and all history', false)
+    .action(async (query: string, options) => {
+      try {
+        const store = await storage.load();
+        const { habit, store: newStore } = deleteHabit(store, query, options.hard);
+        await storage.save(newStore);
+        const actionStr = options.hard ? 'Deleted permanently' : 'Archived';
+        console.log(formatSuccess(`${actionStr} habit "${pc.bold(habit.title)}".`));
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  return program;
+}
+
+export * from './types.js';
+export * from './storage.js';
+export * from './core/habits.js';
+export * from './core/stats.js';
+export * from './ui/formatters.js';
