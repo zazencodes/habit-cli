@@ -1,4 +1,7 @@
 export type Frequency = 'daily' | 'weekly';
+export type Priority = 'high' | 'medium' | 'low';
+
+export const PRIORITY_VALUES: readonly Priority[] = ['high', 'medium', 'low'] as const;
 
 export interface HabitLog {
   date: string; // YYYY-MM-DD
@@ -11,6 +14,7 @@ export interface Habit {
   title: string;
   description?: string;
   frequency: Frequency;
+  priority: Priority;
   tags: string[];
   createdAt: string; // ISO timestamp
   archived: boolean;

@@ -452,4 +452,93 @@ describe('Habits Core Logic', () => {
       expect(second.store.habits[0].freezesUsed).toBe(2);
     });
   });
+
+  describe('Priority (issue #2)', () => {
+    it('defaults a new habit to medium priority when none is provided', () => {
+      const { habit } = createHabit(initialStore, { title: 'Walk Dog' });
+      expect(habit.priority).toBe('medium');
+    });
+
+    it('persists explicit high / medium / low priority on creation', () => {
+      const high = createHabit(initialStore, { title: 'Workout', priority: 'high' });
+      expect(high.habit.priority).toBe('high');
+      expect(high.habit.title).toBe('Workout');
+
+      const medium = createHabit(high.store, { title: 'Floss', priority: 'medium' });
+      expect(medium.habit.priority).toBe('medium');
+
+      const low = createHabit(medium.store, { title: 'Tidy Desk', priority: 'low' });
+      expect(low.habit.priority).toBe('low');
+
+      expect(low.store.habits.map(h => `${h.title}=${h.priority}`)).toEqual([
+        'Workout=high',
+        'Floss=medium',
+        'Tidy Desk=low',
+      ]);
+    });
+
+    it('getHabitsWithStreaks filters habits by priority level', () => {
+      let store: HabitStore = { version: 1, habits: [] };
+      store = createHabit(store, { title: 'Workout', priority: 'high' }).store;
+      store = createHabit(store, { title: 'Read', priority: 'medium' }).store;
+      store = createHabit(store, { title: 'Tidy', priority: 'low' }).store;
+
+      const highOnly = getHabitsWithStreaks(store, { priority: 'high' });
+      expect(highOnly.map(h => h.title)).toEqual(['Workout']);
+
+      const medOnly = getHabitsWithStreaks(store, { priority: 'medium' });
+      expect(medOnly.map(h => h.title)).toEqual(['Read']);
+
+      const lowOnly = getHabitsWithStreaks(store, { priority: 'low' });
+      expect(lowOnly.map(h => h.title)).toEqual(['Tidy']);
+
+      const noFilter = getHabitsWithStreaks(store);
+      expect(noFilter.map(h => h.title).sort()).toEqual(['Read', 'Tidy', 'Workout']);
+    });
+
+    it('getHabitsWithStreaks honors priority filter combined with tag filter', () => {
+      let store: HabitStore = { version: 1, habits: [] };
+      store = createHabit(store, { title: 'Workout', priority: 'high', tags: ['health'] }).store;
+      store = createHabit(store, { title: 'Read', priority: 'high', tags: ['learning'] }).store;
+      store = createHabit(store, { title: 'Stretch', priority: 'medium', tags: ['health'] }).store;
+
+      const filtered = getHabitsWithStreaks(store, { priority: 'high', tag: 'health' });
+      expect(filtered.map(h => h.title)).toEqual(['Workout']);
+    });
+
+    it('gracefully defaults missing priority to medium on legacy habits', () => {
+      // Simulate an on-disk store from before the priority feature was added:
+      // the habit record has no `priority` field at all.
+      const legacy: HabitStore = {
+        version: 1,
+        habits: [
+          {
+            id: 'h-1',
+            title: 'Legacy Habit',
+            frequency: 'daily',
+            tags: [],
+            createdAt: new Date().toISOString(),
+            archived: false,
+            history: [],
+            freezesUsed: 0,
+          },
+        ],
+      };
+      // FileStorage.load() applies this exact normalization on read:
+      // any unrecognized priority string falls back to 'medium'.
+      const normalized: HabitStore = {
+        version: legacy.version,
+        habits: legacy.habits.map(h => ({
+          ...h,
+          priority: (['high', 'medium', 'low'] as readonly string[]).includes(
+            (h as any).priority as string
+          )
+            ? (h as any).priority
+            : 'medium',
+        })),
+      };
+      const habits = getHabitsWithStreaks(normalized);
+      expect(habits[0].priority).toBe('medium');
+    });
+  });
 });
