@@ -1,4 +1,4 @@
-import { format, subDays, differenceInCalendarDays, parseISO, startOfWeek, isSameWeek } from 'date-fns';
+import { format, subDays, differenceInCalendarDays, parseISO, startOfWeek, isSameWeek, addDays } from 'date-fns';
 import { Habit, HabitLog, HabitStore, HabitWithStreak, Frequency, StreakInfo } from '../types.js';
 
 export interface CreateHabitOptions {
@@ -48,6 +48,8 @@ export function createHabit(
     createdAt: new Date().toISOString(),
     archived: false,
     history: [],
+    freezesUsed: 0,
+    frozenUntil: undefined,
   };
 
   const updatedStore: HabitStore = {
@@ -72,7 +74,129 @@ export function findHabit(store: HabitStore, query: string): Habit | undefined {
   );
 }
 
+/**
+ * Compute the inclusive list of dates currently considered "frozen" for
+ * streak bridging. Returns an empty array when the habit has no active
+ * freeze (no `frozenUntil`, or `frozenUntil` is in the past).
+ */
+export function getActiveFrozenDates(habit: Habit, referenceDate = new Date()): string[] {
+  if (!habit.frozenUntil) return [];
+  const todayStr = format(referenceDate, 'yyyy-MM-dd');
+  if (habit.frozenUntil < todayStr) return [];
+
+  const dates: string[] = [];
+  let cursor = referenceDate;
+  // Safety cap: a freeze window cannot reasonably exceed a few years.
+  for (let i = 0; i < 3650; i++) {
+    const s = format(cursor, 'yyyy-MM-dd');
+    if (s > habit.frozenUntil) break;
+    dates.push(s);
+    cursor = addDays(cursor, 1);
+  }
+  return dates;
+}
+
+export function isHabitFrozen(habit: Habit, referenceDate = new Date()): boolean {
+  return getActiveFrozenDates(habit, referenceDate).length > 0;
+}
+
+export interface FreezeOptions {
+  days?: number;
+  reason?: string;
+}
+
+/**
+ * Apply a streak freeze to a habit (or every active habit when query="all").
+ * The freeze window starts at the reference date and ends `frozenUntil`
+ * (inclusive).
+ */
+export function freezeHabit(
+  store: HabitStore,
+  query: string,
+  options: FreezeOptions = {},
+  referenceDate: Date = new Date()
+): { habits: Habit[]; store: HabitStore } {
+  const days = options.days ?? 1;
+  if (!Number.isFinite(days) || days < 1) {
+    throw new Error('Freeze must last at least 1 day.');
+  }
+
+  let targets: Habit[];
+  if (query.trim().toLowerCase() === 'all') {
+    targets = store.habits.filter(h => !h.archived);
+    if (targets.length === 0) {
+      throw new Error('No active habits to freeze.');
+    }
+  } else {
+    const habit = findHabit(store, query);
+    if (!habit) {
+      throw new Error(`Habit not found matching "${query}".`);
+    }
+    targets = [habit];
+  }
+
+  const frozenUntil = format(addDays(referenceDate, days - 1), 'yyyy-MM-dd');
+
+  const targetIds = new Set(targets.map(t => t.id));
+  const updatedHabits = store.habits.map(h => {
+    if (!targetIds.has(h.id)) return h;
+    return {
+      ...h,
+      frozenUntil,
+      freezesUsed: (h.freezesUsed ?? 0) + 1,
+    };
+  });
+
+  const updatedHabitsById = new Map(updatedHabits.map(h => [h.id, h]));
+  return {
+    habits: targets.map(t => updatedHabitsById.get(t.id)!),
+    store: { ...store, habits: updatedHabits },
+  };
+}
+
+/**
+ * Remove the active streak freeze from a habit (or every frozen active
+ * habit when query="all").
+ */
+export function unfreezeHabit(
+  store: HabitStore,
+  query: string,
+  // referenceDate is currently unused but kept for parity with freezeHabit and
+  // future date-aware unfreeze behaviors.
+  _referenceDate: Date = new Date()
+): { habits: Habit[]; store: HabitStore } {
+  let targets: Habit[];
+  if (query.trim().toLowerCase() === 'all') {
+    targets = store.habits.filter(h => !h.archived && h.frozenUntil);
+    if (targets.length === 0) {
+      throw new Error('No frozen habits to unfreeze.');
+    }
+  } else {
+    const habit = findHabit(store, query);
+    if (!habit) {
+      throw new Error(`Habit not found matching "${query}".`);
+    }
+    targets = [habit];
+  }
+
+  const targetIds = new Set(targets.map(t => t.id));
+  const updatedHabits = store.habits.map(h => {
+    if (!targetIds.has(h.id)) return h;
+    return {
+      ...h,
+      frozenUntil: undefined,
+    };
+  });
+
+  const updatedHabitsById = new Map(updatedHabits.map(h => [h.id, h]));
+  return {
+    habits: targets.map(t => updatedHabitsById.get(t.id)!),
+    store: { ...store, habits: updatedHabits },
+  };
+}
+
 export function calculateStreak(habit: Habit, referenceDate = new Date()): StreakInfo {
+
   const todayStr = format(referenceDate, 'yyyy-MM-dd');
 
   // Normalize: deduplicate and sort unique history dates chronologically
@@ -86,7 +210,18 @@ export function calculateStreak(habit: Habit, referenceDate = new Date()): Strea
 
   const isCompletedToday = uniqueDatesDescending.includes(todayStr);
 
-  if (uniqueDatesAscending.length === 0) {
+  // Active freeze dates (today through frozenUntil inclusive) "cover" the user
+  // for streak purposes, so streak calculation should treat them as completed
+  // without requiring a check-in. Freeze dates are always today or future for
+  // an active freeze, so they only ever appear at the start of a back-walk;
+  // they do not retroactively patch historical gaps.
+  const frozenDates = getActiveFrozenDates(habit, referenceDate);
+  const frozenDateSet = new Set(frozenDates);
+  const frozenToday = frozenDateSet.has(todayStr);
+  const yesterdayStr = format(subDays(referenceDate, 1), 'yyyy-MM-dd');
+  const frozenYesterday = frozenDateSet.has(yesterdayStr);
+
+  if (uniqueDatesAscending.length === 0 && frozenDates.length === 0) {
     return { currentStreak: 0, longestStreak: 0, isCompletedToday: false };
   }
 
@@ -95,16 +230,15 @@ export function calculateStreak(habit: Habit, referenceDate = new Date()): Strea
   }
 
   // Daily streak calculation
-  const yesterdayStr = format(subDays(referenceDate, 1), 'yyyy-MM-dd');
-  const hasToday = isCompletedToday;
-  const hasYesterday = uniqueDatesDescending.includes(yesterdayStr);
+  const hasToday = isCompletedToday || frozenToday;
+  const hasYesterday = uniqueDatesDescending.includes(yesterdayStr) || frozenYesterday;
 
   let currentStreak = 0;
   if (hasToday || hasYesterday) {
     let checkDate = hasToday ? referenceDate : subDays(referenceDate, 1);
     while (true) {
       const checkStr = format(checkDate, 'yyyy-MM-dd');
-      if (uniqueDatesDescending.includes(checkStr)) {
+      if (uniqueDatesDescending.includes(checkStr) || frozenDateSet.has(checkStr)) {
         currentStreak += 1;
         checkDate = subDays(checkDate, 1);
       } else {

@@ -9,6 +9,8 @@ import {
   getHabitsWithStreaks,
   findHabit,
   calculateStreak,
+  freezeHabit,
+  unfreezeHabit,
 } from './core/habits.js';
 import { calculateStats } from './core/stats.js';
 import { exportHabits } from './core/export.js';
@@ -19,6 +21,7 @@ import {
   formatSuccess,
   formatError,
   formatInfo,
+  formatFrozenBadge,
 } from './ui/formatters.js';
 import { Frequency } from './types.js';
 
@@ -185,7 +188,55 @@ export function createCli(storage: StorageAdapter = new FileStorage()): Command 
       }
     });
 
-  // habit export [output-path]
+  // habit freeze <id|all>
+  program
+    .command('freeze <target>')
+    .description('Protect a habit streak from resetting (vacation / illness)')
+    .option('-d, --days <count>', 'Number of days to freeze (default: 1)', '1')
+    .option('-r, --reason <text>', 'Optional human-readable reason')
+    .action(async (target: string, options) => {
+      try {
+        const store = await storage.load();
+        const days = parseInt(options.days, 10);
+        const { habits, store: newStore } = freezeHabit(store, target, {
+          days,
+          reason: options.reason,
+        });
+        await storage.save(newStore);
+
+        for (const habit of habits) {
+          const badge = formatFrozenBadge(habit.frozenUntil) ?? '';
+          const reasonSuffix = options.reason ? ` (reason: ${options.reason})` : '';
+          console.log(
+            formatSuccess(`Froze ${pc.bold(habit.title)} for ${days} day(s)${reasonSuffix}. ${badge}`)
+          );
+        }
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit unfreeze <id|all>
+  program
+    .command('unfreeze <target>')
+    .description('Remove the active streak freeze early')
+    .action(async (target: string) => {
+      try {
+        const store = await storage.load();
+        const { habits, store: newStore } = unfreezeHabit(store, target);
+        await storage.save(newStore);
+
+        for (const habit of habits) {
+          console.log(formatSuccess(`Unfroze ${pc.bold(habit.title)}.`));
+        }
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
+  // habit export [output-path] 
   program
     .command('export [output]')
     .description('Export habits to JSON or CSV (stdout by default)')

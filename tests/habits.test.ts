@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { format, subDays, parseISO } from 'date-fns';
+import { format, subDays, parseISO, addDays } from 'date-fns';
 import {
   createHabit,
   completeHabit,
@@ -8,6 +8,10 @@ import {
   findHabit,
   calculateStreak,
   getHabitsWithStreaks,
+  freezeHabit,
+  unfreezeHabit,
+  isHabitFrozen,
+  getActiveFrozenDates,
 } from '../src/core/habits.js';
 import { HabitStore, Habit } from '../src/types.js';
 
@@ -224,6 +228,228 @@ describe('Habits Core Logic', () => {
 
       const permanent = deleteHabit(archived.store, 'h-1', true);
       expect(permanent.store.habits.length).toBe(0);
+    });
+  });
+
+  describe('Streak Freeze / Vacation Mode', () => {
+    const now = new Date('2026-08-17T12:00:00Z');
+    const today = format(now, 'yyyy-MM-dd');
+    const yesterday = format(subDays(now, 1), 'yyyy-MM-dd');
+
+    const makeHabitWithHistory = (historyDates: string[]): Habit => ({
+      id: 'h-1',
+      title: 'Workout',
+      frequency: 'daily',
+      tags: [],
+      createdAt: now.toISOString(),
+      archived: false,
+      history: historyDates.map(date => ({ date, completedAt: '' })),
+      freezesUsed: 0,
+      frozenUntil: undefined,
+    });
+
+    it('freezeHabit sets frozenUntil and increments freezesUsed', () => {
+      const { store } = createHabit(initialStore, { title: 'Read Book' });
+      const frozen = freezeHabit(store, 'h-1', { days: 3 }, now);
+
+      expect(frozen.store.habits[0].frozenUntil).toBe(format(addDays(now, 2), 'yyyy-MM-dd'));
+      expect(frozen.store.habits[0].freezesUsed).toBe(1);
+      expect(frozen.habits[0].frozenUntil).toBe(frozen.store.habits[0].frozenUntil);
+    });
+
+    it('freezeHabit defaults to 1 day when days omitted', () => {
+      const { store } = createHabit(initialStore, { title: 'Read Book' });
+      const frozen = freezeHabit(store, 'h-1', {}, now);
+      expect(frozen.store.habits[0].frozenUntil).toBe(today);
+      expect(frozen.store.habits[0].freezesUsed).toBe(1);
+    });
+
+    it('freezeHabit rejects days counts below 1', () => {
+      const { store } = createHabit(initialStore, { title: 'Read Book' });
+      expect(() => freezeHabit(store, 'h-1', { days: 0 }, now)).toThrow(/at least 1/);
+      expect(() => freezeHabit(store, 'h-1', { days: -2 }, now)).toThrow(/at least 1/);
+    });
+
+    it('freezeHabit throws when no habit matches', () => {
+      const { store } = createHabit(initialStore, { title: 'Read Book' });
+      expect(() => freezeHabit(store, 'nope', {}, now)).toThrow(/Habit not found/);
+    });
+
+    it('freezeHabit applies to every active habit when target is "all"', () => {
+      let store: HabitStore = { version: 1, habits: [] };
+      store = createHabit(store, { title: 'Habit One' }).store;
+      store = createHabit(store, { title: 'Habit Two' }).store;
+      const archived = deleteHabit(store, 'h-2');
+
+      const frozen = freezeHabit(archived.store, 'all', { days: 2 }, now);
+      expect(frozen.store.habits.length).toBe(2);
+      expect(frozen.store.habits[0].frozenUntil).toBe(format(addDays(now, 1), 'yyyy-MM-dd'));
+      expect(frozen.store.habits[1].archived).toBe(true); // archived untouched
+      expect(frozen.store.habits[1].frozenUntil).toBeUndefined();
+      expect(frozen.habits.length).toBe(1); // only active habits reported back
+    });
+
+    it('unfreezeHabit clears frozenUntil but keeps freezesUsed counter', () => {
+      const { store } = createHabit(initialStore, { title: 'Read Book' });
+      const frozen = freezeHabit(store, 'h-1', { days: 5 }, now);
+      const unfrozen = unfreezeHabit(frozen.store, 'h-1', now);
+
+      expect(unfrozen.store.habits[0].frozenUntil).toBeUndefined();
+      expect(unfrozen.store.habits[0].freezesUsed).toBe(1);
+    });
+
+    it('unfreezeHabit "all" only touches currently frozen habits', () => {
+      let store: HabitStore = { version: 1, habits: [] };
+      store = createHabit(store, { title: 'Frozen' }).store;
+      store = createHabit(store, { title: 'Not Frozen' }).store;
+      store = freezeHabit(store, 'h-1', { days: 3 }, now).store;
+
+      const result = unfreezeHabit(store, 'all', now);
+      expect(result.store.habits[0].frozenUntil).toBeUndefined();
+      expect(result.store.habits[0].freezesUsed).toBe(1);
+      expect(result.store.habits[1].frozenUntil).toBeUndefined();
+      expect(result.store.habits[1].freezesUsed).toBe(0);
+      expect(result.habits.length).toBe(1);
+    });
+
+    it('isHabitFrozen reports true only while frozenUntil is in the future', () => {
+      const habit = makeHabitWithHistory([]);
+      expect(isHabitFrozen(habit, now)).toBe(false);
+
+      const frozen: Habit = { ...habit, frozenUntil: today };
+      expect(isHabitFrozen(frozen, now)).toBe(true);
+
+      const expired: Habit = { ...habit, frozenUntil: yesterday };
+      expect(isHabitFrozen(expired, now)).toBe(false);
+    });
+
+    it('getActiveFrozenDates returns today through frozenUntil inclusive', () => {
+      const habit: Habit = {
+        ...makeHabitWithHistory([]),
+        frozenUntil: format(addDays(now, 2), 'yyyy-MM-dd'),
+      };
+      expect(getActiveFrozenDates(habit, now)).toEqual([
+        today,
+        format(addDays(now, 1), 'yyyy-MM-dd'),
+        format(addDays(now, 2), 'yyyy-MM-dd'),
+      ]);
+    });
+
+    it('streak survives a single-day freeze with no check-in today', () => {
+      // User completed yesterday + 3 earlier days. They forgot today and froze it.
+      const habit: Habit = {
+        ...makeHabitWithHistory([
+          format(subDays(now, 3), 'yyyy-MM-dd'),
+          format(subDays(now, 2), 'yyyy-MM-dd'),
+          yesterday,
+        ]),
+        frozenUntil: today,
+      };
+
+      const streak = calculateStreak(habit, now);
+      expect(streak.currentStreak).toBe(4); // 3 history entries + frozen today bridges
+      expect(streak.isCompletedToday).toBe(false); // no actual log
+    });
+
+    it('multi-day freeze window still bridges today when earliest entry is yesterday', () => {
+      // 5 history entries ending yesterday, then a 3-day freeze window
+      // (today...today+2). The back-walk only benefits from today being
+      // frozen; the future frozen days cannot pre-cast completion.
+      const habit: Habit = {
+        ...makeHabitWithHistory([
+          format(subDays(now, 4), 'yyyy-MM-dd'),
+          format(subDays(now, 3), 'yyyy-MM-dd'),
+          format(subDays(now, 2), 'yyyy-MM-dd'),
+          yesterday,
+          format(addDays(now, 1), 'yyyy-MM-dd'), // also logged for tomorrow
+        ]),
+        frozenUntil: format(addDays(now, 2), 'yyyy-MM-dd'),
+      };
+
+      const streak = calculateStreak(habit, now);
+      // today (frozen ✓) → yesterday (history ✓) → 2 days ago (history ✓) →
+      // 3 days ago (history ✓) → 4 days ago (history ✓) = 5 days; tomorrow is
+      // not in the back-walk path.
+      expect(streak.currentStreak).toBe(5);
+      expect(streak.longestStreak).toBe(5);
+    });
+
+    it('multi-freeze habit: re-freezing covers tomorrow too via longer window', () => {
+      // 3 history days ending today, freeze window starts today and continues
+      // 2 more days. Today counts as a "frozen + completed" day in the
+      // back-walk and the streak drops after walking into yesterday.
+      const habit: Habit = {
+        ...makeHabitWithHistory([
+          format(subDays(now, 3), 'yyyy-MM-dd'),
+          format(subDays(now, 2), 'yyyy-MM-dd'),
+          yesterday,
+          today,
+        ]),
+        frozenUntil: format(addDays(now, 2), 'yyyy-MM-dd'),
+      };
+
+      const streak = calculateStreak(habit, now);
+      expect(streak.currentStreak).toBe(4); // today + 3 prior days
+      expect(streak.longestStreak).toBe(4);
+    });
+
+    it('streak breaks once the freeze window passes', () => {
+      // Freeze was active until yesterday. Today it's over and no check-in recorded.
+      const threeDaysAgo = format(subDays(now, 3), 'yyyy-MM-dd');
+      const habit: Habit = {
+        ...makeHabitWithHistory([
+          threeDaysAgo,
+          format(subDays(now, 2), 'yyyy-MM-dd'),
+          yesterday,
+        ]),
+        frozenUntil: yesterday,
+      };
+
+      const streak = calculateStreak(habit, now);
+      // Yesterday is real, walk back to two-days-ago (real) and three-days-ago
+      // (real) — that's the anchored streak because today is no longer frozen.
+      expect(streak.currentStreak).toBe(3);
+    });
+
+    it('freeze does not retroactively patch historical gaps', () => {
+      // Two completed days three days apart. Freeze is currently active and
+      // cannot bridge the historical gap (those days are not in the freeze
+      // window anymore).
+      const oldDate = format(subDays(now, 10), 'yyyy-MM-dd');
+      const habit: Habit = {
+        ...makeHabitWithHistory([oldDate]),
+        frozenUntil: today,
+      };
+
+      const streak = calculateStreak(habit, now);
+      // today (frozen) + yesterday..oldDate? No: yesterday is not in history
+      // and not in the freeze window starting today. So streak = 1 (only today).
+      expect(streak.currentStreak).toBe(1);
+      expect(streak.longestStreak).toBe(1);
+    });
+
+    it('getHabitsWithStreaks honors freeze without exposing internal state', () => {
+      let store: HabitStore = { version: 1, habits: [] };
+      const created = createHabit(store, { title: 'Walking' });
+      store = created.store;
+      const yesterdayEntry = completeHabit(store, 'h-1', { date: yesterday });
+      store = yesterdayEntry.store;
+      const frozen = freezeHabit(store, 'h-1', { days: 2 }, now);
+
+      const habits = getHabitsWithStreaks(frozen.store, undefined, now);
+      const walking = habits.find(h => h.id === 'h-1')!;
+      expect(walking.streak.currentStreak).toBe(2); // yesterday + frozen today
+      // Sanity: there is no break in the existing API surface.
+      expect(walking.streak.isCompletedToday).toBe(false);
+    });
+
+    it('CLI-side idempotency: refreezing extends the window and bumps the counter', () => {
+      const { store } = createHabit(initialStore, { title: 'Meditate' });
+      const first = freezeHabit(store, 'h-1', { days: 1 }, now);
+      const second = freezeHabit(first.store, 'h-1', { days: 4 }, now);
+      // frozenUntil is recomputed to today + 3, freezing 4 days total.
+      expect(second.store.habits[0].frozenUntil).toBe(format(addDays(now, 3), 'yyyy-MM-dd'));
+      expect(second.store.habits[0].freezesUsed).toBe(2);
     });
   });
 });

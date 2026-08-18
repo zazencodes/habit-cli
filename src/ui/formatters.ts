@@ -18,6 +18,13 @@ export function formatInfo(msg: string): string {
   return `${pc.blue('ℹ')} ${msg}`;
 }
 
+export function formatFrozenBadge(frozenUntil: string | undefined, referenceDate = new Date()): string | null {
+  if (!frozenUntil) return null;
+  const todayStr = format(referenceDate, 'yyyy-MM-dd');
+  if (frozenUntil < todayStr) return null;
+  return pc.cyan(`🧊 FROZEN (until ${frozenUntil})`);
+}
+
 export function formatHabitList(habits: HabitWithStreak[]): string {
   if (habits.length === 0) {
     return pc.gray('\n  No habits found. Run `habit add <title>` to create your first habit!\n');
@@ -30,10 +37,11 @@ export function formatHabitList(habits: HabitWithStreak[]): string {
 
   for (const habit of habits) {
     const isDone = habit.streak.isCompletedToday;
-    const statusIcon = isDone ? pc.green('✔') : pc.gray('○');
+    const isFrozen = formatFrozenBadge(habit.frozenUntil) !== null;
+    const statusIcon = isFrozen ? pc.cyan('🧊') : (isDone ? pc.green('✔') : pc.gray('○'));
     const titleText = isDone ? pc.strikethrough(pc.gray(habit.title)) : pc.bold(habit.title);
     const idBadge = pc.gray(`[${habit.id}]`);
-    
+
     // Streak badge
     let streakBadge = pc.gray('0d');
     if (habit.streak.currentStreak > 0) {
@@ -42,9 +50,10 @@ export function formatHabitList(habits: HabitWithStreak[]): string {
 
     const freqBadge = habit.frequency === 'weekly' ? pc.magenta('weekly') : pc.dim('daily');
     const tags = habit.tags.length > 0 ? pc.blue(habit.tags.map(t => `#${t}`).join(' ')) : '';
+    const frozenBadge = formatFrozenBadge(habit.frozenUntil) ?? '';
 
     lines.push(
-      `  ${statusIcon}  ${idBadge.padEnd(8)} ${titleText.padEnd(26)} ${streakBadge.padEnd(12)} ${freqBadge.padEnd(10)} ${tags}`
+      `  ${statusIcon}  ${idBadge.padEnd(8)} ${titleText.padEnd(26)} ${streakBadge.padEnd(12)} ${freqBadge.padEnd(10)} ${frozenBadge} ${tags}`
     );
   }
 
@@ -79,6 +88,19 @@ export function formatHabitDetail(habit: HabitWithStreak): string {
   lines.push(`  - Longest Streak: ${pc.green(`${streak.longestStreak} ${habit.frequency === 'weekly' ? 'weeks' : 'days'}`)}`);
   lines.push(`  - Total Checks:   ${habit.history.length}`);
   lines.push(`  - Status Today:   ${streak.isCompletedToday ? pc.green('Completed ✔') : pc.yellow('Pending ○')}`);
+
+  const frozenBadge = formatFrozenBadge(habit.frozenUntil);
+  if (frozenBadge) {
+    lines.push('');
+    lines.push(pc.bold('  Vacation Mode:'));
+    lines.push(`  - Status:       ${frozenBadge}`);
+    lines.push(`  - Freezes Used: ${pc.cyan((habit.freezesUsed ?? 0).toString())}`);
+  } else if ((habit.freezesUsed ?? 0) > 0) {
+    lines.push('');
+    lines.push(pc.bold('  Vacation Mode:'));
+    lines.push(`  - Status:       ${pc.dim('Not currently frozen')}`);
+    lines.push(`  - Freezes Used: ${pc.cyan((habit.freezesUsed ?? 0).toString())}`);
+  }
 
   // Last 14 days activity graph
   lines.push('');
