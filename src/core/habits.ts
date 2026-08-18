@@ -74,10 +74,19 @@ export function findHabit(store: HabitStore, query: string): Habit | undefined {
 
 export function calculateStreak(habit: Habit, referenceDate = new Date()): StreakInfo {
   const todayStr = format(referenceDate, 'yyyy-MM-dd');
-  const uniqueDates = Array.from(new Set(habit.history.map(h => h.date))).sort().reverse();
-  const isCompletedToday = uniqueDates.includes(todayStr);
 
-  if (uniqueDates.length === 0) {
+  // Normalize: deduplicate and sort unique history dates chronologically
+  // (ascending), regardless of the order check-ins were inserted. localeCompare
+  // is used as an explicit comparator so the sort remains stable and correct
+  // even if the history contains entries written out of order (issue #1).
+  const uniqueDatesAscending = Array.from(
+    new Set(habit.history.map(h => h.date))
+  ).sort((a, b) => a.localeCompare(b));
+  const uniqueDatesDescending = [...uniqueDatesAscending].reverse();
+
+  const isCompletedToday = uniqueDatesDescending.includes(todayStr);
+
+  if (uniqueDatesAscending.length === 0) {
     return { currentStreak: 0, longestStreak: 0, isCompletedToday: false };
   }
 
@@ -87,15 +96,15 @@ export function calculateStreak(habit: Habit, referenceDate = new Date()): Strea
 
   // Daily streak calculation
   const yesterdayStr = format(subDays(referenceDate, 1), 'yyyy-MM-dd');
-  const hasToday = uniqueDates.includes(todayStr);
-  const hasYesterday = uniqueDates.includes(yesterdayStr);
+  const hasToday = isCompletedToday;
+  const hasYesterday = uniqueDatesDescending.includes(yesterdayStr);
 
   let currentStreak = 0;
   if (hasToday || hasYesterday) {
     let checkDate = hasToday ? referenceDate : subDays(referenceDate, 1);
     while (true) {
       const checkStr = format(checkDate, 'yyyy-MM-dd');
-      if (uniqueDates.includes(checkStr)) {
+      if (uniqueDatesDescending.includes(checkStr)) {
         currentStreak += 1;
         checkDate = subDays(checkDate, 1);
       } else {
@@ -104,13 +113,12 @@ export function calculateStreak(habit: Habit, referenceDate = new Date()): Strea
     }
   }
 
-  // Longest streak calculation across sorted ascending dates
-  const ascendingDates = [...uniqueDates].reverse();
+  // Longest streak calculation across ascending dates
   let longestStreak = 0;
   let runningStreak = 0;
   let prevDate: Date | null = null;
 
-  for (const dateStr of ascendingDates) {
+  for (const dateStr of uniqueDatesAscending) {
     const d = parseISO(dateStr);
     if (!prevDate) {
       runningStreak = 1;

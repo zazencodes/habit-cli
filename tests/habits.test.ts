@@ -140,6 +140,53 @@ describe('Habits Core Logic', () => {
       expect(streak.longestStreak).toBe(2);
       expect(streak.isCompletedToday).toBe(false);
     });
+
+    // Reproduces GitHub issue #1: streak should evaluate correctly even when
+    // check-ins were inserted in a non-chronological order.
+    it('should calculate active streak regardless of non-chronological insertions', () => {
+      const habit: Habit = {
+        id: 'h-1',
+        title: 'Drink Water',
+        frequency: 'daily',
+        tags: [],
+        createdAt: now.toISOString(),
+        archived: false,
+        // Insertion order: yesterday, 3 days ago, 2 days ago (not chronological).
+        history: [
+          { date: yesterday, completedAt: '' },
+          { date: threeDaysAgo, completedAt: '' },
+          { date: twoDaysAgo, completedAt: '' },
+        ],
+      };
+
+      const streak = calculateStreak(habit, now);
+      expect(streak.currentStreak).toBe(3);
+      expect(streak.longestStreak).toBe(3);
+      expect(streak.isCompletedToday).toBe(false);
+    });
+
+    it('should calculate active streak when insertions are fully reverse-chronological', () => {
+      const habit: Habit = {
+        id: 'h-1',
+        title: 'Drink Water',
+        frequency: 'daily',
+        tags: [],
+        createdAt: now.toISOString(),
+        archived: false,
+        // Insertion order: today, yesterday, 2 days ago, 3 days ago (reverse).
+        history: [
+          { date: today, completedAt: '' },
+          { date: yesterday, completedAt: '' },
+          { date: twoDaysAgo, completedAt: '' },
+          { date: threeDaysAgo, completedAt: '' },
+        ],
+      };
+
+      const streak = calculateStreak(habit, now);
+      expect(streak.currentStreak).toBe(4);
+      expect(streak.longestStreak).toBe(4);
+      expect(streak.isCompletedToday).toBe(true);
+    });
   });
 
   describe('Completion & Undo Operations', () => {
