@@ -11,6 +11,7 @@ import {
   calculateStreak,
 } from './core/habits.js';
 import { calculateStats } from './core/stats.js';
+import { exportHabits } from './core/export.js';
 import {
   formatHabitList,
   formatHabitDetail,
@@ -184,6 +185,37 @@ export function createCli(storage: StorageAdapter = new FileStorage()): Command 
       }
     });
 
+  // habit export [output-path]
+  program
+    .command('export [output]')
+    .description('Export habits to JSON or CSV (stdout by default)')
+    .option('-f, --format <format>', 'Output format: json or csv', 'json')
+    .option('-o, --out <filepath>', 'Write to file instead of stdout')
+    .option('-a, --all', 'Include archived habits', false)
+    .action(async (output: string | undefined, options) => {
+      try {
+        const destination = options.out || output;
+        const result = await exportHabits(storage, {
+          format: options.format === 'csv' ? 'csv' : 'json',
+          showArchived: options.all,
+          destination,
+        });
+
+        if (result.writtenTo) {
+          console.log(
+            formatSuccess(
+              `Exported ${result.habitCount} habit(s) (${result.bytes} bytes) to ${result.writtenTo}`
+            )
+          );
+        } else {
+          process.stdout.write(result.content);
+        }
+      } catch (err: any) {
+        console.error(formatError(err.message));
+        process.exitCode = 1;
+      }
+    });
+
   return program;
 }
 
@@ -191,4 +223,5 @@ export * from './types.js';
 export * from './storage.js';
 export * from './core/habits.js';
 export * from './core/stats.js';
+export * from './core/export.js';
 export * from './ui/formatters.js';
