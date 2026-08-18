@@ -23,7 +23,15 @@ import {
   formatInfo,
   formatFrozenBadge,
 } from './ui/formatters.js';
-import { Frequency } from './types.js';
+import { Frequency, Priority, PRIORITY_VALUES } from './types.js';
+
+function parsePriority(raw: unknown): Priority {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if ((PRIORITY_VALUES as readonly string[]).includes(value)) {
+    return value as Priority;
+  }
+  throw new Error(`Invalid priority "${raw}". Use one of: ${PRIORITY_VALUES.join(', ')}.`);
+}
 
 export function createCli(storage: StorageAdapter = new FileStorage()): Command {
   const program = new Command();
@@ -40,14 +48,17 @@ export function createCli(storage: StorageAdapter = new FileStorage()): Command 
     .option('-f, --frequency <frequency>', 'Habit frequency: daily or weekly', 'daily')
     .option('-d, --desc <description>', 'Optional habit description')
     .option('-t, --tag <tags...>', 'Optional categorization tags')
+    .option('-p, --priority <level>', `Habit priority: ${PRIORITY_VALUES.join(', ')}`, 'medium')
     .action(async (title: string, options) => {
       try {
         const store = await storage.load();
         const freq: Frequency = options.frequency === 'weekly' ? 'weekly' : 'daily';
+        const priority = parsePriority(options.priority);
         const { habit, store: newStore } = createHabit(store, {
           title,
           description: options.desc,
           frequency: freq,
+          priority,
           tags: options.tag,
         });
         await storage.save(newStore);
@@ -65,12 +76,15 @@ export function createCli(storage: StorageAdapter = new FileStorage()): Command 
     .description('List all active habits and their current streaks')
     .option('-a, --all', 'Show all habits including archived ones', false)
     .option('-t, --tag <tag>', 'Filter habits by tag')
+    .option('-p, --priority <level>', `Filter habits by priority: ${PRIORITY_VALUES.join(', ')}`)
     .action(async options => {
       try {
         const store = await storage.load();
+        const priority = options.priority ? parsePriority(options.priority) : undefined;
         const habits = getHabitsWithStreaks(store, {
           showArchived: options.all,
           tag: options.tag,
+          priority,
         });
         console.log(formatHabitList(habits));
       } catch (err: any) {

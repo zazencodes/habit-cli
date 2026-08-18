@@ -1,10 +1,11 @@
 import { format, subDays, differenceInCalendarDays, parseISO, startOfWeek, isSameWeek, addDays } from 'date-fns';
-import { Habit, HabitLog, HabitStore, HabitWithStreak, Frequency, StreakInfo } from '../types.js';
+import { Habit, HabitLog, HabitStore, HabitWithStreak, Frequency, Priority, StreakInfo } from '../types.js';
 
 export interface CreateHabitOptions {
   title: string;
   description?: string;
   frequency?: Frequency;
+  priority?: Priority;
   tags?: string[];
 }
 
@@ -41,6 +42,7 @@ export function createHabit(
     title,
     description: options.description?.trim() || undefined,
     frequency: options.frequency || 'daily',
+    priority: options.priority || 'medium',
     tags: (options.tags || [])
       .flatMap(t => t.split(','))
       .map(t => t.trim().toLowerCase())
@@ -420,7 +422,7 @@ export function deleteHabit(
 
 export function getHabitsWithStreaks(
   store: HabitStore,
-  options?: { showArchived?: boolean; tag?: string },
+  options?: { showArchived?: boolean; tag?: string; priority?: Priority },
   referenceDate = new Date()
 ): HabitWithStreak[] {
   let list = store.habits;
@@ -432,6 +434,10 @@ export function getHabitsWithStreaks(
   if (options?.tag) {
     const t = options.tag.toLowerCase();
     list = list.filter(h => h.tags.includes(t));
+  }
+
+  if (options?.priority) {
+    list = list.filter(h => h.priority === options.priority);
   }
 
   return list.map(habit => ({

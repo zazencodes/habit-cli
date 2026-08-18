@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HabitStore } from './types.js';
+import { HabitStore, Priority, PRIORITY_VALUES } from './types.js';
 
 export interface StorageAdapter {
   load(): Promise<HabitStore>;
@@ -44,6 +44,9 @@ export class FileStorage implements StorageAdapter {
         ...h,
         freezesUsed: typeof h.freezesUsed === 'number' ? h.freezesUsed : 0,
         frozenUntil: typeof h.frozenUntil === 'string' ? h.frozenUntil : undefined,
+        priority: (PRIORITY_VALUES as readonly string[]).includes(h.priority)
+          ? (h.priority as Priority)
+          : 'medium',
       }));
       return {
         version: parsed.version || 1,

@@ -1,6 +1,6 @@
 import pc from 'picocolors';
 import { format, subDays } from 'date-fns';
-import { HabitWithStreak, HabitStats, Habit } from '../types.js';
+import { HabitWithStreak, HabitStats, Habit, Priority } from '../types.js';
 
 export function formatHeader(text: string): string {
   return pc.bold(pc.cyan(`\n  ✦ ${text}\n`));
@@ -25,6 +25,19 @@ export function formatFrozenBadge(frozenUntil: string | undefined, referenceDate
   return pc.cyan(`🧊 FROZEN (until ${frozenUntil})`);
 }
 
+export function formatPriorityBadge(priority: Priority | undefined): string {
+  switch (priority) {
+    case 'high':
+      return pc.bold(pc.red('[HIGH]'));
+    case 'medium':
+      return pc.yellow('[MED]');
+    case 'low':
+      return pc.dim(pc.gray('[LOW]'));
+    default:
+      return pc.gray(pc.dim('[---]'));
+  }
+}
+
 export function formatHabitList(habits: HabitWithStreak[]): string {
   if (habits.length === 0) {
     return pc.gray('\n  No habits found. Run `habit add <title>` to create your first habit!\n');
@@ -41,6 +54,7 @@ export function formatHabitList(habits: HabitWithStreak[]): string {
     const statusIcon = isFrozen ? pc.cyan('🧊') : (isDone ? pc.green('✔') : pc.gray('○'));
     const titleText = isDone ? pc.strikethrough(pc.gray(habit.title)) : pc.bold(habit.title);
     const idBadge = pc.gray(`[${habit.id}]`);
+    const priorityBadge = formatPriorityBadge(habit.priority);
 
     // Streak badge
     let streakBadge = pc.gray('0d');
@@ -53,7 +67,7 @@ export function formatHabitList(habits: HabitWithStreak[]): string {
     const frozenBadge = formatFrozenBadge(habit.frozenUntil) ?? '';
 
     lines.push(
-      `  ${statusIcon}  ${idBadge.padEnd(8)} ${titleText.padEnd(26)} ${streakBadge.padEnd(12)} ${freqBadge.padEnd(10)} ${frozenBadge} ${tags}`
+      `  ${statusIcon}  ${idBadge.padEnd(8)} ${priorityBadge} ${titleText.padEnd(24)} ${streakBadge.padEnd(12)} ${freqBadge.padEnd(10)} ${frozenBadge} ${tags}`
     );
   }
 
@@ -73,6 +87,7 @@ export function formatHabitDetail(habit: HabitWithStreak): string {
   lines.push(pc.gray('  ' + '─'.repeat(45)));
   lines.push(`  ${pc.dim('ID:')}          ${habit.id}`);
   lines.push(`  ${pc.dim('Frequency:')}   ${habit.frequency}`);
+  lines.push(`  ${pc.dim('Priority:')}    ${formatPriorityBadge(habit.priority)}`);
   lines.push(`  ${pc.dim('Created:')}     ${format(new Date(habit.createdAt), 'yyyy-MM-dd')}`);
   if (habit.description) {
     lines.push(`  ${pc.dim('Description:')} ${habit.description}`);
