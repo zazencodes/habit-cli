@@ -15,6 +15,8 @@ export interface Habit {
   createdAt: string; // ISO timestamp
   archived: boolean;
   history: HabitLog[];
+  freezesUsed: number;
+  frozenUntil?: string; // YYYY-MM-DD, last day included in the freeze window
 }
 
 export interface HabitStore {

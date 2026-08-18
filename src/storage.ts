@@ -39,9 +39,15 @@ export class FileStorage implements StorageAdapter {
       }
       const data = fs.readFileSync(this.filePath, 'utf-8');
       const parsed = JSON.parse(data) as HabitStore;
+      const rawHabits = Array.isArray(parsed.habits) ? parsed.habits : [];
+      const normalizedHabits = rawHabits.map((h: any) => ({
+        ...h,
+        freezesUsed: typeof h.freezesUsed === 'number' ? h.freezesUsed : 0,
+        frozenUntil: typeof h.frozenUntil === 'string' ? h.frozenUntil : undefined,
+      }));
       return {
         version: parsed.version || 1,
-        habits: Array.isArray(parsed.habits) ? parsed.habits : [],
+        habits: normalizedHabits,
       };
     } catch {
       return structuredClone(DEFAULT_STORE);
